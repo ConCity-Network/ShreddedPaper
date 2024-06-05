@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 01:29:10 +0300
+Subject: [PATCH] some fixes2
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 189da906984cfcb3e923010103e687cc97e5618f..3a8303d776152d26b0176e454938a6f3c54b3bf3 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -411,6 +411,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         if (TickThread.isTickThreadFor(this.world, sectionX, sectionZ)) {
+             return this.addE(entity, fromDisk, sectionX, sectionY, sectionZ);
+         } else {
++            LOGGER.info("Trying to add entitoy of " + entity + " off-main thread");
+             ShreddedPaperRegionScheduler.schedule(this.world, RegionPos.forBlockPos(pos), () -> this.addE(entity, fromDisk, sectionX, sectionY, sectionZ));
+         }
+ 
+@@ -519,6 +520,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     private ChunkEntitySlices moveEntity(final Entity entity) {
+         // ensure we own the entity
+         //TickThread.ensureTickThread(entity, "Cannot move entity off-main");
++        LOGGER.info("Moving entity " + entity + " to new position");
+ 
+         final BlockPos newPos = entity.blockPosition();
+         final ChunkPos chunkPos = new ChunkPos(entity.blockPosition());

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 01:30:04 +0300
+Subject: [PATCH] some fixes2
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 3a8303d776152d26b0176e454938a6f3c54b3bf3..b955f4ab97e2652ea1f57ac2353045a016a0c3b8 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -420,6 +420,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     }
+ 
+     private boolean addE(final Entity entity, final boolean fromDisk, final int sectionX, final int sectionY, final int sectionZ) {
++        long now = System.currentTimeMillis();
+         TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
+         LOGGER.info("Adding entity " + entity + " to world '" + this.world.getWorld().getName() + "' at (" + sectionX + "," + sectionY + "," + sectionZ + ")");
+ 
+@@ -468,6 +469,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         entity.setLevelCallback(new EntityCallback(entity));
+         this.entityStatusChange(entity, slices, Visibility.HIDDEN, getEntityStatus(entity), false, !fromDisk, false);
+ 
++        LOGGER.info("Added entity " + entity + "in " + (System.currentTimeMillis() - now) + "ms");
+         return true;
+     }
+ 
