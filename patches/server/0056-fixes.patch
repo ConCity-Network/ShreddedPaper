@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 01:51:45 +0300
+Subject: [PATCH] fixes
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index b955f4ab97e2652ea1f57ac2353045a016a0c3b8..978bff09e99794b82a8a98e826d9d379d4aa8fd8 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -422,7 +422,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     private boolean addE(final Entity entity, final boolean fromDisk, final int sectionX, final int sectionY, final int sectionZ) {
+         long now = System.currentTimeMillis();
+         TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
+-        LOGGER.info("Adding entity " + entity + " to world '" + this.world.getWorld().getName() + "' at (" + sectionX + "," + sectionY + "," + sectionZ + ")");
+ 
+         if (entity.isRemoved()) {
+             LOGGER.warn("Refusing to add removed entity: " + entity);
+@@ -469,7 +468,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         entity.setLevelCallback(new EntityCallback(entity));
+         this.entityStatusChange(entity, slices, Visibility.HIDDEN, getEntityStatus(entity), false, !fromDisk, false);
+ 
+-        LOGGER.info("Added entity " + entity + "in " + (System.currentTimeMillis() - now) + "ms");
+         return true;
+     }
+ 
+@@ -522,7 +520,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+     private ChunkEntitySlices moveEntity(final Entity entity) {
+         // ensure we own the entity
+         //TickThread.ensureTickThread(entity, "Cannot move entity off-main");
+-        LOGGER.info("Moving entity " + entity + " to new position");
+ 
+         final BlockPos newPos = entity.blockPosition();
+         final ChunkPos chunkPos = new ChunkPos(entity.blockPosition());

@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 01:43:25 +0300
+Subject: [PATCH] FIX ServerChunkCache#getChunk shits.
+
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 2a0b482f03a96345c350040e9c926e02202445a6..b6cbd48f3d47a59d45398fd655dbc02f26849fbc 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -254,7 +254,43 @@ public class ServerChunkCache extends ChunkSource {
+     @Nullable
+     @Override
+     public ChunkAccess getChunk(int x, int z, ChunkStatus leastStatus, boolean create) {
+-        final int x1 = x; final int z1 = z; // Paper - conflict on variable change
++        // Paper start - Perf: Optimise getChunkAt calls for loaded chunks
++        LevelChunk ifLoaded = this.getChunkAtIfLoadedMainThread(x, z);
++        if (ifLoaded != null) {
++            return ifLoaded;
++        }
++        // Paper end - Perf: Optimise getChunkAt calls for loaded chunks
++        //ProfilerFiller gameprofilerfiller = this.level.getProfiler(); // Purpur
++
++        //gameprofilerfiller.incrementCounter("getChunk"); // Purpur
++        long k = ChunkPos.asLong(x, z);
++
++        // Paper - rewrite chunk system - there are no correct callbacks to remove items from cache in the new chunk system
++
++        //gameprofilerfiller.incrementCounter("getChunkCacheMiss"); // Purpur
++        CompletableFuture<ChunkResult<ChunkAccess>> completablefuture = this.getChunkFutureMainThread(x, z, leastStatus, create);
++        ServerChunkCache.MainThreadExecutor chunkproviderserver_b = this.mainThreadProcessor;
++
++        Objects.requireNonNull(completablefuture);
++        if (!completablefuture.isDone()) { // Paper
++            io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.pushChunkWait(this.level, x1, z1); // Paper - rewrite chunk system
++            com.destroystokyo.paper.io.SyncLoadFinder.logSyncLoad(this.level, x, z); // Paper - Add debug for sync chunk loads
++            //this.level.timings.syncChunkLoad.startTiming(); // Paper // Purpur
++            chunkproviderserver_b.managedBlock(completablefuture::isDone);
++            io.papermc.paper.chunk.system.scheduling.ChunkTaskScheduler.popChunkWait(); // Paper - rewrite chunk system
++            //this.level.timings.syncChunkLoad.stopTiming(); // Paper // Purpur
++        } // Paper
++        ChunkResult<ChunkAccess> chunkresult = (ChunkResult) completablefuture.join();
++        ChunkAccess ichunkaccess1 = (ChunkAccess) chunkresult.orElse(null); // CraftBukkit - decompile error
++
++        if (ichunkaccess1 == null && create) {
++            throw (IllegalStateException) Util.pauseInIde(new IllegalStateException("Chunk not there when requested: " + chunkresult.getError()));
++        } else {
++            this.storeInCache(k, ichunkaccess1, leastStatus);
++            return ichunkaccess1;
++        }
++
++        /*final int x1 = x; final int z1 = z; // Paper - conflict on variable change
+         if (!io.papermc.paper.util.TickThread.isTickThreadFor(this.level, x, z)) { // Paper - rewrite chunk system // ShreddedPaper - regions
+             CompletableFuture<ChunkAccess> future = CompletableFuture.supplyAsync(() -> { // ShreddedPaper - regions
+                 return this.getChunk(x, z, leastStatus, create);
+@@ -297,7 +333,7 @@ public class ServerChunkCache extends ChunkSource {
+                 this.storeInCache(k, ichunkaccess1, leastStatus);
+                 return ichunkaccess1;
+             }
+-        }
++        }*/
+     }
+ 
+     @Nullable
