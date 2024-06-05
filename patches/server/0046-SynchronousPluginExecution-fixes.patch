@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 23:28:46 +0300
+Subject: [PATCH] SynchronousPluginExecution fixes.
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+index f1d114ea1e52b6128c912223f9cf2d713cc05df6..137b88b6ead4206349d4daca7700baf35cbcc441 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
++++ b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+@@ -249,10 +249,9 @@ public class RegionizedPlayerChunkLoader {
+         if (TickThread.isTickThreadFor(player)) {
+             run.run();
+         } else {
+-            Plugin plugin = SynchronousPluginExecution.getCurrentPlugin(); // ShreddedPaper - synchronous plugin execution
+-            player.getBukkitEntity().getScheduler().run(plugin, task -> {
++            player.getBukkitEntity().taskScheduler.schedule(e -> {
+                 run.run();
+-            }, null);
++            }, null, 1);
+         }
+ 
+     }
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 44269bff43d3bf2680c3f87ce8f029fe26228b10..3de199f5199f48906e6361f919140f961cf7fd11 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -525,7 +525,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             TickThread.ensureTickThread(this.world, newSectionX, newSectionZ, "Cannot move entity off-main1");
+ 
+             // ensure the old section is owned by this tick thread
+-            TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main2");
++            //TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main2");
+ 
+             final ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
+             final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index 46c6034f7d3cf152cc13773d38ad7b84792014a8..1997b5d01e4dbd5800013a320be65fd80e5ad581 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -4991,8 +4991,7 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+         if (io.papermc.paper.util.TickThread.isTickThreadFor(this)) {
+             run.run();
+         } else {
+-            Plugin plugin = SynchronousPluginExecution.getCurrentPlugin(); // ShreddedPaper - synchronous plugin execution
+-            getBukkitEntity().getScheduler().run(plugin, task -> run.run(), null);
++            getBukkitEntity().taskScheduler.schedule(e -> run.run(), null, 1);
+         }
+ 
+     }
+diff --git a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+index 646321a8da482b62e01fa078159364b4af2e1c15..24ee09234f527bf9055aa0519514e38edb4e5b7f 100644
+--- a/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
++++ b/src/main/java/org/bukkit/craftbukkit/entity/CraftPlayer.java
+@@ -1498,13 +1498,12 @@ public class CraftPlayer extends CraftHumanEntity implements Player {
+         } else {
+             // The respawn reason should never be used if the passed location is non null.
+             if (!TickThread.isTickThreadFor(entity.serverLevel(), entity.position()) || !TickThread.isTickThreadFor(toWorld, CraftLocation.toBlockPosition(to))){
+-                Plugin plugin = SynchronousPluginExecution.getCurrentPlugin(); // ShreddedPaper - synchronous plugin execution
+                 Location finalTo = to.clone();
+-                entity.getBukkitEntity().getScheduler().run(plugin, task -> {
++                entity.getBukkitEntity().taskScheduler.schedule(task -> {
+                     this.server.getHandle().respawnAsync(entity, toWorld, true, finalTo, !toWorld.paperConfig().environment.disableTeleportationSuffocationCheck, null).thenAcceptAsync(serverPlayer -> {
+ 
+                     }); // Paper // ShreddedPaper - will be run on this thread
+-                }, null);
++                }, null, 1);
+             } else {
+                 this.server.getHandle().respawnAsync(entity, toWorld, true, to, !toWorld.paperConfig().environment.disableTeleportationSuffocationCheck, null).join(); // Paper // ShreddedPaper - will be run on this thread
+             }

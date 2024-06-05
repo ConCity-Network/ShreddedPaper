@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 21:06:39 +0300
+Subject: [PATCH] disable AsyncCatcher.
+
+
+diff --git a/src/main/java/org/spigotmc/AsyncCatcher.java b/src/main/java/org/spigotmc/AsyncCatcher.java
+index 2e074c16dab1ead47914070329da0398c3274048..cfb745595a01b07fba15756e72f09fe5866f40c7 100644
+--- a/src/main/java/org/spigotmc/AsyncCatcher.java
++++ b/src/main/java/org/spigotmc/AsyncCatcher.java
+@@ -12,7 +12,7 @@ public class AsyncCatcher
+         if (!(io.papermc.paper.util.TickThread.isTickThread())) // Paper
+         {
+             MinecraftServer.LOGGER.error("Thread " + Thread.currentThread().getName() + " failed main thread check: " + reason, new Throwable()); // Paper
+-            throw new IllegalStateException( "Asynchronous " + reason + "!" );
++            //throw new IllegalStateException( "Asynchronous " + reason + "!" );
+         }
+     }
+ }

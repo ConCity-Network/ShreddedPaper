@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 00:16:18 +0300
+Subject: [PATCH] some fixes
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 3805f2babc5d275485abd2fc8611ae8ca65d7790..7fcfba3209c9ce7d39ac6e709776167feabf2aa1 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -263,79 +263,68 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             return;
+         }
+ 
+-        final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
+-        entity.updatingSectionStatus = true;
+-
+-        Runnable run = () -> {
++        try {
++            //TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
++            final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
+             try {
+-                TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
+-
+-
++                entity.updatingSectionStatus = true;
+                 try {
++                    if (created) {
++                        EntityLookup.this.worldCallback.onCreated(entity);
++                    }
+ 
+-                    try {
+-                        if (created) {
+-                            EntityLookup.this.worldCallback.onCreated(entity);
++                    if (oldVisibility == newVisibility) {
++                        if (moved && newVisibility.isAccessible()) {
++                            EntityLookup.this.worldCallback.onSectionChange(entity);
+                         }
++                        return;
++                    }
+ 
+-                        if (oldVisibility == newVisibility) {
+-                            if (moved && newVisibility.isAccessible()) {
+-                                EntityLookup.this.worldCallback.onSectionChange(entity);
+-                            }
+-                            return;
++                    if (newVisibility.ordinal() > oldVisibility.ordinal()) {
++                        // status upgrade
++                        if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
++                            synchronized (this.accessibleEntities) { // ShreddedPaper
++                                this.accessibleEntities.add(entity);
++                            } // ShreddedPaper
++                            EntityLookup.this.worldCallback.onTrackingStart(entity);
+                         }
+ 
+-                        if (newVisibility.ordinal() > oldVisibility.ordinal()) {
+-                            // status upgrade
+-                            if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
+-                                synchronized (this.accessibleEntities) { // ShreddedPaper
+-                                    this.accessibleEntities.add(entity);
+-                                } // ShreddedPaper
+-                                EntityLookup.this.worldCallback.onTrackingStart(entity);
+-                            }
+-
+-                            if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
+-                                EntityLookup.this.worldCallback.onTickingStart(entity);
+-                            }
+-                        } else {
+-                            // status downgrade
+-                            if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
+-                                EntityLookup.this.worldCallback.onTickingEnd(entity);
+-                            }
+-
+-                            if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
+-                                synchronized (this.accessibleEntities) { // ShreddedPaper
+-                                    this.accessibleEntities.remove(entity);
+-                                } // ShreddedPaper
+-                                EntityLookup.this.worldCallback.onTrackingEnd(entity);
+-                            }
++                        if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
++                            EntityLookup.this.worldCallback.onTickingStart(entity);
+                         }
+-
+-                        if (moved && newVisibility.isAccessible()) {
+-                            EntityLookup.this.worldCallback.onSectionChange(entity);
++                    } else {
++                        // status downgrade
++                        if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
++                            EntityLookup.this.worldCallback.onTickingEnd(entity);
+                         }
+ 
+-                        if (destroyed) {
+-                            EntityLookup.this.worldCallback.onDestroyed(entity);
++                        if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
++                            synchronized (this.accessibleEntities) { // ShreddedPaper
++                                this.accessibleEntities.remove(entity);
++                            } // ShreddedPaper
++                            EntityLookup.this.worldCallback.onTrackingEnd(entity);
+                         }
+-                    } finally {
+-                        entity.updatingSectionStatus = false;
++                    }
++
++                    if (moved && newVisibility.isAccessible()) {
++                        EntityLookup.this.worldCallback.onSectionChange(entity);
++                    }
++
++                    if (destroyed) {
++                        EntityLookup.this.worldCallback.onDestroyed(entity);
+                     }
+                 } finally {
+-                    this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
++                    entity.updatingSectionStatus = false;
+                 }
+             } finally {
+-                if (slices != null) {
+-                    slices.stopPreventingStatusUpdates(false);
+-                }
++                this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
++            }
++        } finally {
++            if (slices != null) {
++                slices.stopPreventingStatusUpdates(false);
+             }
+-        };
+-
+-        if (TickThread.isTickThreadFor(entity)) {
+-            run.run();
+-        } else {
+-            entity.getBukkitEntity().taskScheduler.schedule(e -> run.run(), null, 1);
+         }
++
+     }
+ 
+     public void chunkStatusChange(final int x, final int z, final FullChunkStatus newStatus) {

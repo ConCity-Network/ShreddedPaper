@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 23:15:39 +0300
+Subject: [PATCH] fix EntityLookup#moveEntity
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 8689d5c6bf43e46f72064abd65f521ec701a31cd..44269bff43d3bf2680c3f87ce8f029fe26228b10 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -545,13 +545,8 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             future.complete(slices);
+         };
+ 
+-
+-        if (TickThread.isTickThreadFor(entity) && TickThread.isTickThreadFor((ServerLevel) entity.level(), chunkPos.x, chunkPos.z, newSectionX, newSectionZ)) {
+-            run.run();
+-        } else {
+-            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) entity.level(), RegionPos.forChunk(entity.chunkPosition()), (ServerLevel) entity.level(), RegionPos.forChunk(chunkPos), run);
+-        }
+-
++        ServerLevel serverLevel = (ServerLevel) entity.level();
++        ShreddedPaperRegionScheduler.scheduleAcrossLevels(serverLevel, RegionPos.forChunk(entity.chunkPosition()), serverLevel, RegionPos.forChunk(new ChunkPos(newSectionX, newSectionZ)), run);
+ 
+         return future;
+     }

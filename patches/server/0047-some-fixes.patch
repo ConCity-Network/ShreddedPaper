@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 23:57:43 +0300
+Subject: [PATCH] some fixes
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 3de199f5199f48906e6361f919140f961cf7fd11..6954b5aa60f886a071ccc81303dbb3eb3e6392a5 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -328,11 +328,10 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             }
+         };
+ 
+-        if (TickThread.isTickThreadFor(entity) && (slices != null ? TickThread.isTickThreadFor((ServerLevel) entity.level(), slices.chunkX, slices.chunkZ ) : TickThread.isTickThreadFor((ServerLevel) entity.level(), entity.blockPosition()))) {
++        if (TickThread.isTickThreadFor(entity)) {
+             run.run();
+         } else {
+-            RegionPos pos = RegionPos.forChunk(entity.chunkPosition());
+-            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) entity.level(), pos, (ServerLevel) entity.level(), pos, run);
++            entity.getBukkitEntity().taskScheduler.schedule(e -> run.run(), null, 1);
+         }
+     }
+ 
+@@ -408,7 +407,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         final int sectionX = pos.getX() >> 4;
+         final int sectionY = Mth.clamp(pos.getY() >> 4, this.minSection, this.maxSection);
+         final int sectionZ = pos.getZ() >> 4;
+-        TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
++        //TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
+ 
+         if (entity.isRemoved()) {
+             LOGGER.warn("Refusing to add removed entity: " + entity);
+@@ -545,9 +544,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             future.complete(slices);
+         };
+ 
+-        ServerLevel serverLevel = (ServerLevel) entity.level();
+-        ShreddedPaperRegionScheduler.scheduleAcrossLevels(serverLevel, RegionPos.forChunk(entity.chunkPosition()), serverLevel, RegionPos.forChunk(new ChunkPos(newSectionX, newSectionZ)), run);
+-
++        entity.getBukkitEntity().taskScheduler.schedule(e -> run.run(), null, 1);
+         return future;
+     }
+ 
+diff --git a/src/main/java/org/bukkit/craftbukkit/inventory/CraftInventoryPlayer.java b/src/main/java/org/bukkit/craftbukkit/inventory/CraftInventoryPlayer.java
+index 1ba11d3653790464bc9af174daecf351fac07d4e..d2ac2bbd3bf5d231310be0b5004a09b774014a32 100644
+--- a/src/main/java/org/bukkit/craftbukkit/inventory/CraftInventoryPlayer.java
++++ b/src/main/java/org/bukkit/craftbukkit/inventory/CraftInventoryPlayer.java
+@@ -71,7 +71,7 @@ public class CraftInventoryPlayer extends CraftInventory implements org.bukkit.i
+ 
+     @Override
+     public void setItem(int index, ItemStack item) {
+-        TickThread.ensureTickThread(getInventory().player, "Player inventory modification"); // ShreddedPaper
++        //TickThread.ensureTickThread(getInventory().player, "Player inventory modification"); // ShreddedPaper
+         super.setItem(index, item);
+         if (this.getHolder() == null) return;
+         ServerPlayer player = ((CraftPlayer) this.getHolder()).getHandle();
