@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 00:35:46 +0300
+Subject: [PATCH] some fixes
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 7fcfba3209c9ce7d39ac6e709776167feabf2aa1..3a31baeb90ddfed51d7d1adde8ee62f826d22cf6 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -495,8 +495,7 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+     }
+ 
+-    private CompletableFuture<ChunkEntitySlices> moveEntity(final Entity entity) {
+-        CompletableFuture<ChunkEntitySlices> future = new CompletableFuture<>();
++    private ChunkEntitySlices moveEntity(final Entity entity) {
+         // ensure we own the entity
+         //TickThread.ensureTickThread(entity, "Cannot move entity off-main");
+ 
+@@ -506,38 +505,32 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         final int newSectionY = Mth.clamp(newPos.getY() >> 4, this.minSection, this.maxSection);
+         final int newSectionZ = newPos.getZ() >> 4;
+ 
+-        Runnable run = () -> {
+-            if (newSectionX == entity.sectionX && newSectionY == entity.sectionY && newSectionZ == entity.sectionZ) {
+-                future.complete(null);
+-                return;
+-            }
+-
+-            // ensure the new section is owned by this tick thread
+-            TickThread.ensureTickThread(this.world, newSectionX, newSectionZ, "Cannot move entity off-main1");
++        if (newSectionX == entity.sectionX && newSectionY == entity.sectionY && newSectionZ == entity.sectionZ) {
++            return null;
++        }
+ 
+-            // ensure the old section is owned by this tick thread
+-            //TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main2");
++        // ensure the new section is owned by this tick thread
++        TickThread.ensureTickThread(this.world, newSectionX, newSectionZ, "Cannot move entity off-main1");
+ 
+-            final ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
+-            final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
++        // ensure the old section is owned by this tick thread
++        //TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main2");
+ 
+-            if (!old.removeEntity(entity, entity.sectionY)) {
+-                LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
+-            }
++        final ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
++        final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+-            if (!slices.addEntity(entity, newSectionY)) {
+-                LOGGER.warn("Could not add entity " + entity + " to its new chunk section (" + newSectionX + "," + newSectionY + "," + newSectionZ + ") as it is already contained in the section");
+-            }
++        if (!old.removeEntity(entity, entity.sectionY)) {
++            LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
++        }
+ 
+-            entity.sectionX = newSectionX;
+-            entity.sectionY = newSectionY;
+-            entity.sectionZ = newSectionZ;
++        if (!slices.addEntity(entity, newSectionY)) {
++            LOGGER.warn("Could not add entity " + entity + " to its new chunk section (" + newSectionX + "," + newSectionY + "," + newSectionZ + ") as it is already contained in the section");
++        }
+ 
+-            future.complete(slices);
+-        };
++        entity.sectionX = newSectionX;
++        entity.sectionY = newSectionY;
++        entity.sectionZ = newSectionZ;
+ 
+-        entity.getBukkitEntity().taskScheduler.schedule(e -> run.run(), null, 1);
+-        return future;
++        return slices;
+     }
+ 
+     public void getEntitiesWithoutDragonParts(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+@@ -883,15 +876,14 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         public void onMove() {
+             final Entity entity = this.entity;
+             final Visibility oldVisibility = getEntityStatus(entity);
+-            EntityLookup.this.moveEntity(this.entity).thenAccept(newSlices -> {
+-                if (newSlices == null) {
+-                    // no new section, so didn't change sections
+-                    return;
+-                }
+-                final Visibility newVisibility = getEntityStatus(entity);
++            ChunkEntitySlices newSlices = EntityLookup.this.moveEntity(this.entity);
++            if (newSlices == null) {
++                // no new section, so didn't change sections
++                return;
++            }
++            final Visibility newVisibility = getEntityStatus(entity);
+ 
+-                EntityLookup.this.entityStatusChange(entity, newSlices, oldVisibility, newVisibility, true, false, false);
+-            });
++            EntityLookup.this.entityStatusChange(entity, newSlices, oldVisibility, newVisibility, true, false, false);
+         }
+ 
+         @Override
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index 1997b5d01e4dbd5800013a320be65fd80e5ad581..9b2c56439c06d23a86a96d31908b984a3f28d9f2 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -2154,27 +2154,19 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     public void moveTo(double x, double y, double z, float yaw, float pitch) {
+-        Runnable run = () -> { // ShreddedPaper
+-            // Paper start - Fix Entity Teleportation and cancel velocity if teleported
+-            if (!preserveMotion) {
+-                this.deltaMovement = Vec3.ZERO;
+-            } else {
+-                this.preserveMotion = false;
+-            }
+-            // Paper end - Fix Entity Teleportation and cancel velocity if teleported
+-            this.setPosRaw(x, y, z);
+-            this.setYRot(yaw);
+-            this.setXRot(pitch);
+-            this.setOldPosAndRot();
+-            this.reapplyPosition();
+-            this.setYHeadRot(yaw); // Paper - Update head rotation
+-        };
+-        BlockPos toPos = new BlockPos((int) x, (int) y, (int) z);
+-        if (TickThread.isTickThreadFor(this) && TickThread.isTickThreadFor((ServerLevel) level, toPos)) {
+-            run.run();
++        // Paper start - Fix Entity Teleportation and cancel velocity if teleported
++        if (!preserveMotion) {
++            this.deltaMovement = Vec3.ZERO;
+         } else {
+-            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) level, RegionPos.forBlockPos(toPos), (ServerLevel) level, RegionPos.forBlockPos(toPos), run);
++            this.preserveMotion = false;
+         }
++        // Paper end - Fix Entity Teleportation and cancel velocity if teleported
++        this.setPosRaw(x, y, z);
++        this.setYRot(yaw);
++        this.setXRot(pitch);
++        this.setOldPosAndRot();
++        this.reapplyPosition();
++        this.setYHeadRot(yaw); // Paper - Update head rotation
+         //if (levelCallback != EntityInLevelCallback.NULL) TickThread.ensureTickThread((ServerLevel) level(), x, z, "Can't move entity to async destination"); // ShreddedPaper - can't teleport into other regions
+     }
+ 
+diff --git a/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java b/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
+index 927e164108fa1f05bdc69a7bc2955a21a105b37e..0cbc4f94238e4d3dc26fe15ad1017d5622ebb1e2 100644
+--- a/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -239,15 +239,16 @@ public abstract class BlockEntity {
+         if (this.level != null) {
+             if (ignoreTileUpdates) return; // Paper - Perf: Optimize Hoppers
+ 
++            BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
+ 
+-            if (TickThread.isTickThreadFor((ServerLevel) this.level, this.worldPosition)) {
++            /*9if (TickThread.isTickThreadFor((ServerLevel) this.level, this.worldPosition)) {
+                 TickThread.ensureTickThread((ServerLevel) this.level, this.worldPosition, "Block entity modification"); // ShreddedPaper
+                 BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
+             } else {
+                 ShreddedPaperRegionScheduler.schedule((ServerLevel) this.level, RegionPos.forBlockPos(this.worldPosition), () -> {
+                     BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
+                 });
+-            }
++            }*/
+ 
+         }
+ 
