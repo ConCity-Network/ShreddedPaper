@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 22:02:27 +0300
+Subject: [PATCH] fixes Entity#moveTo & EntityLookup.EntityCallback#onMove
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index e22012b5854c9e7725780cf8f3173949202c1472..f3ff6f274bd5aa7b312105aec0d13c5264199113 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -2,6 +2,8 @@ package io.papermc.paper.chunk.system.entity;
+ 
+ import com.destroystokyo.paper.util.maplist.EntityList;
+ import com.mojang.logging.LogUtils;
++import io.multipaper.shreddedpaper.region.RegionPos;
++import io.multipaper.shreddedpaper.threading.ShreddedPaperRegionScheduler;
+ import io.papermc.paper.util.CoordinateUtils;
+ import io.papermc.paper.util.TickThread;
+ import io.papermc.paper.util.WorldUtil;
+@@ -35,6 +37,7 @@ import java.util.Iterator;
+ import java.util.List;
+ import java.util.NoSuchElementException;
+ import java.util.UUID;
++import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.locks.StampedLock;
+ import java.util.function.Consumer;
+ import java.util.function.Predicate;
+@@ -493,41 +496,56 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+     }
+ 
+-    private ChunkEntitySlices moveEntity(final Entity entity) {
++    private CompletableFuture<ChunkEntitySlices> moveEntity(final Entity entity) {
++        CompletableFuture<ChunkEntitySlices> future = new CompletableFuture<>();
+         // ensure we own the entity
+-        TickThread.ensureTickThread(entity, "Cannot move entity off-main");
++        //TickThread.ensureTickThread(entity, "Cannot move entity off-main");
+ 
+         final BlockPos newPos = entity.blockPosition();
++        final ChunkPos chunkPos = new ChunkPos(entity.blockPosition());
+         final int newSectionX = newPos.getX() >> 4;
+         final int newSectionY = Mth.clamp(newPos.getY() >> 4, this.minSection, this.maxSection);
+         final int newSectionZ = newPos.getZ() >> 4;
+ 
+-        if (newSectionX == entity.sectionX && newSectionY == entity.sectionY && newSectionZ == entity.sectionZ) {
+-            return null;
+-        }
++        Runnable run = () -> {
++            if (newSectionX == entity.sectionX && newSectionY == entity.sectionY && newSectionZ == entity.sectionZ) {
++                future.complete(null);
++                return;
++            }
+ 
+-        // ensure the new section is owned by this tick thread
+-        TickThread.ensureTickThread(this.world, newSectionX, newSectionZ, "Cannot move entity off-main");
++            // ensure the new section is owned by this tick thread
++            TickThread.ensureTickThread(this.world, newSectionX, newSectionZ, "Cannot move entity off-main1");
+ 
+-        // ensure the old section is owned by this tick thread
+-        TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main");
++            // ensure the old section is owned by this tick thread
++            TickThread.ensureTickThread(this.world, entity.sectionX, entity.sectionZ, "Cannot move entity off-main2");
+ 
+-        final ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
+-        final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
++            final ChunkEntitySlices old = this.getChunk(entity.sectionX, entity.sectionZ);
++            final ChunkEntitySlices slices = this.getOrCreateChunk(newSectionX, newSectionZ);
+ 
+-        if (!old.removeEntity(entity, entity.sectionY)) {
+-            LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
+-        }
++            if (!old.removeEntity(entity, entity.sectionY)) {
++                LOGGER.warn("Could not remove entity " + entity + " from its old chunk section (" + entity.sectionX + "," + entity.sectionY + "," + entity.sectionZ + ") since it was not contained in the section");
++            }
++
++            if (!slices.addEntity(entity, newSectionY)) {
++                LOGGER.warn("Could not add entity " + entity + " to its new chunk section (" + newSectionX + "," + newSectionY + "," + newSectionZ + ") as it is already contained in the section");
++            }
+ 
+-        if (!slices.addEntity(entity, newSectionY)) {
+-            LOGGER.warn("Could not add entity " + entity + " to its new chunk section (" + newSectionX + "," + newSectionY + "," + newSectionZ + ") as it is already contained in the section");
++            entity.sectionX = newSectionX;
++            entity.sectionY = newSectionY;
++            entity.sectionZ = newSectionZ;
++
++            future.complete(slices);
++        };
++
++
++        if (TickThread.isTickThreadFor(entity) && TickThread.isTickThreadFor((ServerLevel) entity.level(), chunkPos.x, chunkPos.z, newSectionX, newSectionZ)) {
++            run.run();
++        } else {
++            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) entity.level(), RegionPos.forChunk(entity.chunkPosition()), (ServerLevel) entity.level(), RegionPos.forChunk(chunkPos), run);
+         }
+ 
+-        entity.sectionX = newSectionX;
+-        entity.sectionY = newSectionY;
+-        entity.sectionZ = newSectionZ;
+ 
+-        return slices;
++        return future;
+     }
+ 
+     public void getEntitiesWithoutDragonParts(final Entity except, final AABB box, final List<Entity> into, final Predicate<? super Entity> predicate) {
+@@ -873,14 +891,15 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         public void onMove() {
+             final Entity entity = this.entity;
+             final Visibility oldVisibility = getEntityStatus(entity);
+-            final ChunkEntitySlices newSlices = EntityLookup.this.moveEntity(this.entity);
+-            if (newSlices == null) {
+-                // no new section, so didn't change sections
+-                return;
+-            }
+-            final Visibility newVisibility = getEntityStatus(entity);
++            EntityLookup.this.moveEntity(this.entity).thenAccept(newSlices -> {
++                if (newSlices == null) {
++                    // no new section, so didn't change sections
++                    return;
++                }
++                final Visibility newVisibility = getEntityStatus(entity);
+ 
+-            EntityLookup.this.entityStatusChange(entity, newSlices, oldVisibility, newVisibility, true, false, false);
++                EntityLookup.this.entityStatusChange(entity, newSlices, oldVisibility, newVisibility, true, false, false);
++            });
+         }
+ 
+         @Override
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index cad612dccae637690693182ed02005cc3ebc18f4..b0fe4332bc332a7d6aeaf1203b5981e1a8faddb7 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -2152,20 +2152,28 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     }
+ 
+     public void moveTo(double x, double y, double z, float yaw, float pitch) {
+-        if (levelCallback != EntityInLevelCallback.NULL) TickThread.ensureTickThread((ServerLevel) level(), x, z, "Can't move entity to async destination"); // ShreddedPaper - can't teleport into other regions
+-        // Paper start - Fix Entity Teleportation and cancel velocity if teleported
+-        if (!preserveMotion) {
+-            this.deltaMovement = Vec3.ZERO;
++        Runnable run = () -> { // ShreddedPaper
++            // Paper start - Fix Entity Teleportation and cancel velocity if teleported
++            if (!preserveMotion) {
++                this.deltaMovement = Vec3.ZERO;
++            } else {
++                this.preserveMotion = false;
++            }
++            // Paper end - Fix Entity Teleportation and cancel velocity if teleported
++            this.setPosRaw(x, y, z);
++            this.setYRot(yaw);
++            this.setXRot(pitch);
++            this.setOldPosAndRot();
++            this.reapplyPosition();
++            this.setYHeadRot(yaw); // Paper - Update head rotation
++        };
++        BlockPos toPos = new BlockPos((int) x, (int) y, (int) z);
++        if (TickThread.isTickThreadFor(this) && TickThread.isTickThreadFor((ServerLevel) level, toPos)) {
++            run.run();
+         } else {
+-            this.preserveMotion = false;
++            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) level, RegionPos.forBlockPos(toPos), (ServerLevel) level, RegionPos.forBlockPos(toPos), run);
+         }
+-        // Paper end - Fix Entity Teleportation and cancel velocity if teleported
+-        this.setPosRaw(x, y, z);
+-        this.setYRot(yaw);
+-        this.setXRot(pitch);
+-        this.setOldPosAndRot();
+-        this.reapplyPosition();
+-        this.setYHeadRot(yaw); // Paper - Update head rotation
++        //if (levelCallback != EntityInLevelCallback.NULL) TickThread.ensureTickThread((ServerLevel) level(), x, z, "Can't move entity to async destination"); // ShreddedPaper - can't teleport into other regions
+     }
+ 
+     public final void setOldPosAndRot() {
