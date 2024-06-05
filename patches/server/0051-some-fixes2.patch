@@ -1,0 +1,299 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 01:06:26 +0300
+Subject: [PATCH] some fixes2
+
+
+diff --git a/src/main/java/io/multipaper/shreddedpaper/config/ShreddedPaperConfiguration.java b/src/main/java/io/multipaper/shreddedpaper/config/ShreddedPaperConfiguration.java
+index 0bf2c3513535b23303a3c21d8d2543263a9dad65..30e900ed96e11b6111793e6e4cf847550fbcec81 100644
+--- a/src/main/java/io/multipaper/shreddedpaper/config/ShreddedPaperConfiguration.java
++++ b/src/main/java/io/multipaper/shreddedpaper/config/ShreddedPaperConfiguration.java
+@@ -31,7 +31,7 @@ public class ShreddedPaperConfiguration extends ConfigurationPart {
+ 
+         public int threadCount = -1;
+         public int regionSize = 8;
+-        public boolean runUnsupportedPluginsInSync = true;
++        public boolean runUnsupportedPluginsInSync = false;
+ 
+     }
+ 
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index 3a31baeb90ddfed51d7d1adde8ee62f826d22cf6..189da906984cfcb3e923010103e687cc97e5618f 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -250,81 +250,89 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+     public void entityStatusChange(final Entity entity, final ChunkEntitySlices slices, final Visibility oldVisibility, final Visibility newVisibility, final boolean moved,
+                                    final boolean created, final boolean destroyed) {
+-        if (entity.updatingSectionStatus) {
+-            // recursive status update
+-            LOGGER.error("Cannot recursively update entity chunk status for entity " + entity, new Throwable());
+-            return;
+-        }
++        Runnable run = () -> {
++            if (entity.updatingSectionStatus) {
++                // recursive status update
++                LOGGER.error("Cannot recursively update entity chunk status for entity " + entity, new Throwable());
++                return;
++            }
+ 
+-        final boolean entityStatusUpdateBefore = slices == null ? false : slices.startPreventingStatusUpdates();
++            final boolean entityStatusUpdateBefore = slices == null ? false : slices.startPreventingStatusUpdates();
+ 
+-        if (entityStatusUpdateBefore) {
+-            LOGGER.error("Cannot update chunk status for entity " + entity + " since entity chunk (" + slices.chunkX + "," + slices.chunkZ + ") is receiving update", new Throwable());
+-            return;
+-        }
++            if (entityStatusUpdateBefore) {
++                LOGGER.error("Cannot update chunk status for entity " + entity + " since entity chunk (" + slices.chunkX + "," + slices.chunkZ + ") is receiving update", new Throwable());
++                return;
++            }
+ 
+-        try {
+-            //TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
+-            final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
+             try {
+-                entity.updatingSectionStatus = true;
++                TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
++                final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
+                 try {
+-                    if (created) {
+-                        EntityLookup.this.worldCallback.onCreated(entity);
+-                    }
+-
+-                    if (oldVisibility == newVisibility) {
+-                        if (moved && newVisibility.isAccessible()) {
+-                            EntityLookup.this.worldCallback.onSectionChange(entity);
++                    entity.updatingSectionStatus = true;
++                    try {
++                        if (created) {
++                            EntityLookup.this.worldCallback.onCreated(entity);
+                         }
+-                        return;
+-                    }
+ 
+-                    if (newVisibility.ordinal() > oldVisibility.ordinal()) {
+-                        // status upgrade
+-                        if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
+-                            synchronized (this.accessibleEntities) { // ShreddedPaper
+-                                this.accessibleEntities.add(entity);
+-                            } // ShreddedPaper
+-                            EntityLookup.this.worldCallback.onTrackingStart(entity);
++                        if (oldVisibility == newVisibility) {
++                            if (moved && newVisibility.isAccessible()) {
++                                EntityLookup.this.worldCallback.onSectionChange(entity);
++                            }
++                            return;
+                         }
+ 
+-                        if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
+-                            EntityLookup.this.worldCallback.onTickingStart(entity);
+-                        }
+-                    } else {
+-                        // status downgrade
+-                        if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
+-                            EntityLookup.this.worldCallback.onTickingEnd(entity);
++                        if (newVisibility.ordinal() > oldVisibility.ordinal()) {
++                            // status upgrade
++                            if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
++                                synchronized (this.accessibleEntities) { // ShreddedPaper
++                                    this.accessibleEntities.add(entity);
++                                } // ShreddedPaper
++                                EntityLookup.this.worldCallback.onTrackingStart(entity);
++                            }
++
++                            if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
++                                EntityLookup.this.worldCallback.onTickingStart(entity);
++                            }
++                        } else {
++                            // status downgrade
++                            if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
++                                EntityLookup.this.worldCallback.onTickingEnd(entity);
++                            }
++
++                            if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
++                                synchronized (this.accessibleEntities) { // ShreddedPaper
++                                    this.accessibleEntities.remove(entity);
++                                } // ShreddedPaper
++                                EntityLookup.this.worldCallback.onTrackingEnd(entity);
++                            }
+                         }
+ 
+-                        if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
+-                            synchronized (this.accessibleEntities) { // ShreddedPaper
+-                                this.accessibleEntities.remove(entity);
+-                            } // ShreddedPaper
+-                            EntityLookup.this.worldCallback.onTrackingEnd(entity);
++                        if (moved && newVisibility.isAccessible()) {
++                            EntityLookup.this.worldCallback.onSectionChange(entity);
+                         }
+-                    }
+ 
+-                    if (moved && newVisibility.isAccessible()) {
+-                        EntityLookup.this.worldCallback.onSectionChange(entity);
+-                    }
+-
+-                    if (destroyed) {
+-                        EntityLookup.this.worldCallback.onDestroyed(entity);
++                        if (destroyed) {
++                            EntityLookup.this.worldCallback.onDestroyed(entity);
++                        }
++                    } finally {
++                        entity.updatingSectionStatus = false;
+                     }
+                 } finally {
+-                    entity.updatingSectionStatus = false;
++                    this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
+                 }
+             } finally {
+-                this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
+-            }
+-        } finally {
+-            if (slices != null) {
+-                slices.stopPreventingStatusUpdates(false);
++                if (slices != null) {
++                    slices.stopPreventingStatusUpdates(false);
++                }
+             }
+-        }
+ 
++        };
++
++        if (TickThread.isTickThreadFor(entity)) {
++            run.run();
++        } else {
++            ShreddedPaperRegionScheduler.schedule(this.world, RegionPos.forBlockPos(entity.blockPosition()), run);
++        }
+     }
+ 
+     public void chunkStatusChange(final int x, final int z, final FullChunkStatus newStatus) {
+@@ -399,7 +407,20 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         final int sectionX = pos.getX() >> 4;
+         final int sectionY = Mth.clamp(pos.getY() >> 4, this.minSection, this.maxSection);
+         final int sectionZ = pos.getZ() >> 4;
+-        //TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
++
++        if (TickThread.isTickThreadFor(this.world, sectionX, sectionZ)) {
++            return this.addE(entity, fromDisk, sectionX, sectionY, sectionZ);
++        } else {
++            ShreddedPaperRegionScheduler.schedule(this.world, RegionPos.forBlockPos(pos), () -> this.addE(entity, fromDisk, sectionX, sectionY, sectionZ));
++        }
++
++
++        return true;
++    }
++
++    private boolean addE(final Entity entity, final boolean fromDisk, final int sectionX, final int sectionY, final int sectionZ) {
++        TickThread.ensureTickThread(this.world, sectionX, sectionZ, "Cannot add entity off-main thread");
++        LOGGER.info("Adding entity " + entity + " to world '" + this.world.getWorld().getName() + "' at (" + sectionX + "," + sectionY + "," + sectionZ + ")");
+ 
+         if (entity.isRemoved()) {
+             LOGGER.warn("Refusing to add removed entity: " + entity);
+diff --git a/src/main/java/io/papermc/paper/threadedregions/EntityScheduler.java b/src/main/java/io/papermc/paper/threadedregions/EntityScheduler.java
+index ee491389207b82a9b16954e774dbdf219b0ab40f..62484ebf4550b05182f693a3180bbac5d5fd906d 100644
+--- a/src/main/java/io/papermc/paper/threadedregions/EntityScheduler.java
++++ b/src/main/java/io/papermc/paper/threadedregions/EntityScheduler.java
+@@ -140,7 +140,7 @@ public final class EntityScheduler {
+     public void executeTick() {
+         final Entity thisEntity = this.entity.getHandleRaw();
+ 
+-        //TickThread.ensureTickThread(thisEntity, "May not tick entity scheduler asynchronously");
++        TickThread.ensureTickThread(thisEntity, "May not tick entity scheduler asynchronously");
+         final List<ScheduledTask> toRun;
+         synchronized (this.stateLock) {
+             if (this.tickCount == RETIRED_TICK_COUNT) {
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index b76fe41a3607d4315cf791d20fcf9d897468bf09..a6e2fa7ab610d33025b4f9a5b492b29ecdc1adfd 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -2792,49 +2792,57 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         }
+ 
+         public void onTrackingStart(Entity entity) {
+-            TickThread.ensureTickThread(entity, "entity register"); // org.spigotmc.AsyncCatcher.catchOp("entity register"); // Spigot // ShreddedPaper
+-            // ServerLevel.this.getChunkSource().addEntity(entity); // Paper - ignore and warn about illegal addEntity calls instead of crashing server; moved down below valid=true
+-            if (entity instanceof ServerPlayer entityplayer) {
+-                ServerLevel.this.players.add(entityplayer);
+-                ServerLevel.this.getChunkSource().tickingRegions.addPlayer(entityplayer); // ShreddedPaper - add player to region
+-                ServerLevel.this.updateSleepingPlayerList();
+-            }
++            Runnable run = () -> {
++                TickThread.ensureTickThread(entity, "entity register"); // org.spigotmc.AsyncCatcher.catchOp("entity register"); // Spigot // ShreddedPaper
++                // ServerLevel.this.getChunkSource().addEntity(entity); // Paper - ignore and warn about illegal addEntity calls instead of crashing server; moved down below valid=true
++                if (entity instanceof ServerPlayer entityplayer) {
++                    ServerLevel.this.players.add(entityplayer);
++                    ServerLevel.this.getChunkSource().tickingRegions.addPlayer(entityplayer); // ShreddedPaper - add player to region
++                    ServerLevel.this.updateSleepingPlayerList();
++                }
+ 
+-            if (entity instanceof Mob entityinsentient) {
+-                if (false && ServerLevel.this.isUpdatingNavigations.get()) { // Paper - Remove unnecessary onTrackingStart during navigation warning // ShreddedPaper - use thread local
+-                    String s = "onTrackingStart called during navigation iteration";
++                if (entity instanceof Mob entityinsentient) {
++                    if (false && ServerLevel.this.isUpdatingNavigations.get()) { // Paper - Remove unnecessary onTrackingStart during navigation warning // ShreddedPaper - use thread local
++                        String s = "onTrackingStart called during navigation iteration";
+ 
+-                    Util.logAndPauseIfInIde("onTrackingStart called during navigation iteration", new IllegalStateException("onTrackingStart called during navigation iteration"));
++                        Util.logAndPauseIfInIde("onTrackingStart called during navigation iteration", new IllegalStateException("onTrackingStart called during navigation iteration"));
++                    }
++
++                    chunkSource.tickingRegions.addNavigationMob(entityinsentient); // ServerLevel.this.navigatingMobs.add(entityinsentient); // ShreddedPaper
+                 }
+ 
+-                chunkSource.tickingRegions.addNavigationMob(entityinsentient); // ServerLevel.this.navigatingMobs.add(entityinsentient); // ShreddedPaper
+-            }
++                if (entity instanceof EnderDragon entityenderdragon) {
++                    EnderDragonPart[] aentitycomplexpart = entityenderdragon.getSubEntities();
++                    int i = aentitycomplexpart.length;
+ 
+-            if (entity instanceof EnderDragon entityenderdragon) {
+-                EnderDragonPart[] aentitycomplexpart = entityenderdragon.getSubEntities();
+-                int i = aentitycomplexpart.length;
++                    for (int j = 0; j < i; ++j) {
++                        EnderDragonPart entitycomplexpart = aentitycomplexpart[j];
+ 
+-                for (int j = 0; j < i; ++j) {
+-                    EnderDragonPart entitycomplexpart = aentitycomplexpart[j];
++                        ServerLevel.this.dragonParts.put(entitycomplexpart.getId(), entitycomplexpart);
++                    }
++                }
+ 
+-                    ServerLevel.this.dragonParts.put(entitycomplexpart.getId(), entitycomplexpart);
++                entity.updateDynamicGameEventListener(DynamicGameEventListener::add);
++                entity.inWorld = true; // CraftBukkit - Mark entity as in world
++                entity.valid = true; // CraftBukkit
++                ServerLevel.this.getChunkSource().addEntity(entity); // Paper - ignore and warn about illegal addEntity calls instead of crashing server
++                // Paper start - Entity origin API
++                if (entity.getOriginVector() == null) {
++                    entity.setOrigin(entity.getBukkitEntity().getLocation());
++                }
++                // Default to current world if unknown, gross assumption but entities rarely change world
++                if (entity.getOriginWorld() == null) {
++                    entity.setOrigin(entity.getOriginVector().toLocation(getWorld()));
+                 }
++                // Paper end - Entity origin API
++                new com.destroystokyo.paper.event.entity.EntityAddToWorldEvent(entity.getBukkitEntity(), ServerLevel.this.getWorld()).callEvent(); // Paper - fire while valid
++            };
++            if (TickThread.isTickThreadFor(entity)) {
++                run.run();
++            } else {
++                ShreddedPaperRegionScheduler.schedule(ServerLevel.this, RegionPos.forBlockPos(entity.blockPosition()), run);
+             }
+ 
+-            entity.updateDynamicGameEventListener(DynamicGameEventListener::add);
+-            entity.inWorld = true; // CraftBukkit - Mark entity as in world
+-            entity.valid = true; // CraftBukkit
+-            ServerLevel.this.getChunkSource().addEntity(entity); // Paper - ignore and warn about illegal addEntity calls instead of crashing server
+-            // Paper start - Entity origin API
+-            if (entity.getOriginVector() == null) {
+-                entity.setOrigin(entity.getBukkitEntity().getLocation());
+-            }
+-            // Default to current world if unknown, gross assumption but entities rarely change world
+-            if (entity.getOriginWorld() == null) {
+-                entity.setOrigin(entity.getOriginVector().toLocation(getWorld()));
+-            }
+-            // Paper end - Entity origin API
+-            new com.destroystokyo.paper.event.entity.EntityAddToWorldEvent(entity.getBukkitEntity(), ServerLevel.this.getWorld()).callEvent(); // Paper - fire while valid
+         }
+ 
+         public void onTrackingEnd(Entity entity) {
