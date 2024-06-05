@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 19:21:57 +0300
+Subject: [PATCH] debug
+
+
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 53e7424a078ab1c9ff58363714da144b891fcc74..b888371ded166d6facf6de792b99cf3fafa6db71 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1072,6 +1072,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+         this.safeShutdown(waitForShutdown, false);
+     }
+     public void safeShutdown(boolean waitForShutdown, boolean isRestarting) {
++        new Throwable().printStackTrace(); // Paper - Debugging
+         org.purpurmc.purpur.task.BossBarTask.stopAll(); // Purpur
+         org.purpurmc.purpur.task.BeehiveTask.instance().unregister(); // Purpur
+         this.isRestarting = isRestarting;
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index 8ff1f92bf02a510299c0332a9d01c54a387adb5a..0bf790aab565385f6a9ef91cff1a672ce56005f1 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -2072,6 +2072,7 @@ public final class CraftServer implements Server {
+ 
+     @Override
+     public void shutdown() {
++        this.getLogger().info("CraftServer#shutdown");
+         this.console.halt(false);
+     }
+ 

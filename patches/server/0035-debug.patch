@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 19:16:35 +0300
+Subject: [PATCH] debug
+
+
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index b6d5954ae9fbbcc52d9bd0bfb7b46d78f907b436..53e7424a078ab1c9ff58363714da144b891fcc74 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -937,6 +937,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+     @Override
+     public void close() {
++        MinecraftServer.LOGGER.info("Debug | DedicatedServer#close called");
+         this.stopServer();
+     }
+ 
+@@ -1309,6 +1310,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+             this.onServerCrash(crashreport);
+         } finally {
+             try {
++                MinecraftServer.LOGGER.info("Debug | MinecraftServer#stopServer called");
+                 this.stopped = true;
+                 this.stopServer();
+             } catch (Throwable throwable1) {
+diff --git a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+index 7507624e1e40b902855ac846f64a39a23e5a3646..004b1b04336e42de2fec57bd5633535f293a8ba3 100644
+--- a/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
++++ b/src/main/java/net/minecraft/server/dedicated/DedicatedServer.java
+@@ -877,6 +877,7 @@ public class DedicatedServer extends MinecraftServer implements ServerInterface
+ 
+     @Override
+     public void stopServer() {
++        MinecraftServer.LOGGER.info("Debug | DedicatedServer#stopServer called");
+         super.stopServer();
+         //Util.shutdownExecutors(); // Paper - moved into super
+         SkullBlockEntity.clear();

@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 20:38:51 +0300
+Subject: [PATCH] fix CraftPlayer#teleport.
+
+
+diff --git a/src/main/java/net/minecraft/server/players/PlayerList.java b/src/main/java/net/minecraft/server/players/PlayerList.java
+index ab96dcb873758f9d92eecb62b473b84dc9e295a2..4e321cf3ddd38922e7a6a6b68f92b963f64992e0 100644
+--- a/src/main/java/net/minecraft/server/players/PlayerList.java
++++ b/src/main/java/net/minecraft/server/players/PlayerList.java
+@@ -845,7 +845,7 @@ public abstract class PlayerList {
+ 
+     public ServerPlayer respawn(ServerPlayer entityplayer, ServerLevel worldserver, boolean flag, Location location, boolean avoidSuffocation, RespawnReason reason, org.bukkit.event.player.PlayerRespawnEvent.RespawnFlag...respawnFlags) {
+         // ShreddedPaper start - async respawn
+-        throw new UnsupportedOperationException("Cannot respawn player synchronously");
++        return respawnAsync(entityplayer, worldserver, flag, location, avoidSuffocation, reason, respawnFlags).join();
+     }
+ 
+     public CompletableFuture<ServerPlayer> respawnAsync(ServerPlayer entityplayer, boolean flag, RespawnReason reason) {
