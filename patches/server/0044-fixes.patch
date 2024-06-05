@@ -1,0 +1,386 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Wed, 5 Jun 2024 22:46:59 +0300
+Subject: [PATCH] fixes: - Block entity modification - Block change is not
+ write locked - Cannot remove entity off-main - Entity status change must only
+ happen on the main thread - Cannot remove player from player chunk loader
+ async
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+index 7dbfb606375d16b93e4e446c3639e33137bf70e3..f1d114ea1e52b6128c912223f9cf2d713cc05df6 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
++++ b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+@@ -5,6 +5,7 @@ import ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor;
+ import ca.spottedleaf.concurrentutil.util.ConcurrentUtil;
+ import io.multipaper.shreddedpaper.ShreddedPaper;
+ import io.multipaper.shreddedpaper.threading.ShreddedPaperChunkTicker;
++import io.multipaper.shreddedpaper.threading.SynchronousPluginExecution;
+ import io.papermc.paper.chunk.system.scheduling.ChunkHolderManager;
+ import io.papermc.paper.configuration.GlobalConfiguration;
+ import io.papermc.paper.util.CoordinateUtils;
+@@ -35,6 +36,7 @@ import net.minecraft.world.level.levelgen.BelowZeroRetrogen;
+ import org.bukkit.craftbukkit.entity.CraftPlayer;
+ import org.bukkit.entity.Player;
+ import io.multipaper.shreddedpaper.region.RegionPos;
++import org.bukkit.plugin.Plugin;
+ 
+ import java.lang.invoke.VarHandle;
+ import java.util.ArrayDeque;
+@@ -230,19 +232,29 @@ public class RegionizedPlayerChunkLoader {
+     }
+ 
+     public void removePlayer(final ServerPlayer player) {
+-        TickThread.ensureTickThread(player, "Cannot remove player from player chunk loader async");
+         if (!player.isRealPlayer) {
+             return;
+         }
++        Runnable run = () -> {
++            TickThread.ensureTickThread(player, "Cannot remove player from player chunk loader async");
++            final PlayerChunkLoaderData loader = player.chunkLoader;
+ 
+-        final PlayerChunkLoaderData loader = player.chunkLoader;
++            if (loader == null) {
++                return;
++            }
+ 
+-        if (loader == null) {
+-            return;
++            loader.remove();
++            player.chunkLoader = null;
++        };
++        if (TickThread.isTickThreadFor(player)) {
++            run.run();
++        } else {
++            Plugin plugin = SynchronousPluginExecution.getCurrentPlugin(); // ShreddedPaper - synchronous plugin execution
++            player.getBukkitEntity().getScheduler().run(plugin, task -> {
++                run.run();
++            }, null);
+         }
+ 
+-        loader.remove();
+-        player.chunkLoader = null;
+     }
+ 
+     public void setSendDistance(final int distance) {
+diff --git a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+index f3ff6f274bd5aa7b312105aec0d13c5264199113..8689d5c6bf43e46f72064abd65f521ec701a31cd 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
++++ b/src/main/java/io/papermc/paper/chunk/system/entity/EntityLookup.java
+@@ -250,8 +250,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+ 
+     public void entityStatusChange(final Entity entity, final ChunkEntitySlices slices, final Visibility oldVisibility, final Visibility newVisibility, final boolean moved,
+                                    final boolean created, final boolean destroyed) {
+-        TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
+-
+         if (entity.updatingSectionStatus) {
+             // recursive status update
+             LOGGER.error("Cannot recursively update entity chunk status for entity " + entity, new Throwable());
+@@ -265,65 +263,76 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+             return;
+         }
+ 
+-        try {
+-            final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
++        Runnable run = () -> {
+             try {
+-                entity.updatingSectionStatus = true;
+-                try {
+-                    if (created) {
+-                        EntityLookup.this.worldCallback.onCreated(entity);
+-                    }
++                TickThread.ensureTickThread(entity, "Entity status change must only happen on the main thread");
+ 
+-                    if (oldVisibility == newVisibility) {
+-                        if (moved && newVisibility.isAccessible()) {
+-                            EntityLookup.this.worldCallback.onSectionChange(entity);
++                final Boolean ticketBlockBefore = this.world.chunkTaskScheduler.chunkHolderManager.blockTicketUpdates();
++                try {
++                    entity.updatingSectionStatus = true;
++                    try {
++                        if (created) {
++                            EntityLookup.this.worldCallback.onCreated(entity);
+                         }
+-                        return;
+-                    }
+ 
+-                    if (newVisibility.ordinal() > oldVisibility.ordinal()) {
+-                        // status upgrade
+-                        if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
+-                            synchronized (this.accessibleEntities) { // ShreddedPaper
+-                            this.accessibleEntities.add(entity);
+-                            } // ShreddedPaper
+-                            EntityLookup.this.worldCallback.onTrackingStart(entity);
++                        if (oldVisibility == newVisibility) {
++                            if (moved && newVisibility.isAccessible()) {
++                                EntityLookup.this.worldCallback.onSectionChange(entity);
++                            }
++                            return;
+                         }
+ 
+-                        if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
+-                            EntityLookup.this.worldCallback.onTickingStart(entity);
+-                        }
+-                    } else {
+-                        // status downgrade
+-                        if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
+-                            EntityLookup.this.worldCallback.onTickingEnd(entity);
++                        if (newVisibility.ordinal() > oldVisibility.ordinal()) {
++                            // status upgrade
++                            if (!oldVisibility.isAccessible() && newVisibility.isAccessible()) {
++                                synchronized (this.accessibleEntities) { // ShreddedPaper
++                                    this.accessibleEntities.add(entity);
++                                } // ShreddedPaper
++                                EntityLookup.this.worldCallback.onTrackingStart(entity);
++                            }
++
++                            if (!oldVisibility.isTicking() && newVisibility.isTicking()) {
++                                EntityLookup.this.worldCallback.onTickingStart(entity);
++                            }
++                        } else {
++                            // status downgrade
++                            if (oldVisibility.isTicking() && !newVisibility.isTicking()) {
++                                EntityLookup.this.worldCallback.onTickingEnd(entity);
++                            }
++
++                            if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
++                                synchronized (this.accessibleEntities) { // ShreddedPaper
++                                    this.accessibleEntities.remove(entity);
++                                } // ShreddedPaper
++                                EntityLookup.this.worldCallback.onTrackingEnd(entity);
++                            }
+                         }
+ 
+-                        if (oldVisibility.isAccessible() && !newVisibility.isAccessible()) {
+-                            synchronized (this.accessibleEntities) { // ShreddedPaper
+-                            this.accessibleEntities.remove(entity);
+-                            } // ShreddedPaper
+-                            EntityLookup.this.worldCallback.onTrackingEnd(entity);
++                        if (moved && newVisibility.isAccessible()) {
++                            EntityLookup.this.worldCallback.onSectionChange(entity);
+                         }
+-                    }
+-
+-                    if (moved && newVisibility.isAccessible()) {
+-                        EntityLookup.this.worldCallback.onSectionChange(entity);
+-                    }
+ 
+-                    if (destroyed) {
+-                        EntityLookup.this.worldCallback.onDestroyed(entity);
++                        if (destroyed) {
++                            EntityLookup.this.worldCallback.onDestroyed(entity);
++                        }
++                    } finally {
++                        entity.updatingSectionStatus = false;
+                     }
+                 } finally {
+-                    entity.updatingSectionStatus = false;
++                    this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
+                 }
+             } finally {
+-                this.world.chunkTaskScheduler.chunkHolderManager.unblockTicketUpdates(ticketBlockBefore);
+-            }
+-        } finally {
+-            if (slices != null) {
+-                slices.stopPreventingStatusUpdates(false);
++                if (slices != null) {
++                    slices.stopPreventingStatusUpdates(false);
++                }
+             }
++        };
++
++        if (TickThread.isTickThreadFor(entity) && (slices != null ? TickThread.isTickThreadFor((ServerLevel) entity.level(), slices.chunkX, slices.chunkZ ) : TickThread.isTickThreadFor((ServerLevel) entity.level(), entity.blockPosition()))) {
++            run.run();
++        } else {
++            RegionPos pos = RegionPos.forChunk(entity.chunkPosition());
++            ShreddedPaperRegionScheduler.scheduleAcrossLevels((ServerLevel) entity.level(), pos, (ServerLevel) entity.level(), pos, run);
+         }
+     }
+ 
+@@ -444,7 +453,6 @@ public final class EntityLookup implements LevelEntityGetter<Entity> {
+         }
+ 
+         entity.setLevelCallback(new EntityCallback(entity));
+-
+         this.entityStatusChange(entity, slices, Visibility.HIDDEN, getEntityStatus(entity), false, !fromDisk, false);
+ 
+         return true;
+diff --git a/src/main/java/net/minecraft/server/level/ChunkHolder.java b/src/main/java/net/minecraft/server/level/ChunkHolder.java
+index 8da6278f841e0ac032ae74ed75b7689d43e2cdfb..d693ddae5b117300a70696cdc103e4f4b8fbb48d 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkHolder.java
++++ b/src/main/java/net/minecraft/server/level/ChunkHolder.java
+@@ -3,6 +3,7 @@ package net.minecraft.server.level;
+ import com.mojang.datafixers.util.Pair;
+ import io.multipaper.shreddedpaper.region.RegionPos;
+ import io.multipaper.shreddedpaper.threading.ShreddedPaperChangesBroadcaster;
++import io.multipaper.shreddedpaper.threading.ShreddedPaperRegionScheduler;
+ import io.papermc.paper.util.TickThread;
+ import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
+ import it.unimi.dsi.fastutil.shorts.ShortSet;
+@@ -215,27 +216,30 @@ public class ChunkHolder {
+     // Paper - rewrite chunk system
+ 
+     public void blockChanged(BlockPos pos) {
+-        if (!chunkMap.level.getServer().forceTicks && !TickThread.isShutdownThread() && !this.chunkMap.level.chunkScheduler.getRegionLocker().hasWriteLock(RegionPos.forBlockPos(pos))) { // ShreddedPaper
+-            TickThread.failedTickThreadCheck("Block change is not write locked", "world=" + this.chunkMap.level.convertable.getLevelId() + ", pos=" + pos + ", newstate=" + this.getFullChunkNow().getBlockState(pos)); // ShreddedPaper
+-        } // ShreddedPaper
+-        // Paper start - replace player chunk loader
+-        if (this.playersSentChunkTo.size() == 0) {
+-            return;
+-        }
+-        // Paper end - replace player chunk loader
+-        LevelChunk chunk = this.getSendingChunk(); // Paper - no-tick view distance
++        // ShreddedPaper
++        chunkMap.level.chunkScheduler.schedule(RegionPos.forBlockPos(pos), () -> {
++            if (!chunkMap.level.getServer().forceTicks && !TickThread.isShutdownThread() && !this.chunkMap.level.chunkScheduler.getRegionLocker().hasWriteLock(RegionPos.forBlockPos(pos))) { // ShreddedPaper
++                TickThread.failedTickThreadCheck("Block change is not write locked alphoo!", "world=" + this.chunkMap.level.convertable.getLevelId() + ", pos=" + pos + ", newstate=" + this.getFullChunkNow().getBlockState(pos)); // ShreddedPaper
++            }
++            // Paper start - replace player chunk loader
++            if (this.playersSentChunkTo.size() == 0) {
++                return;
++            }
++            // Paper end - replace player chunk loader
++            LevelChunk chunk = this.getSendingChunk(); // Paper - no-tick view distance
+ 
+-        if (chunk != null) {
+-            int i = this.levelHeightAccessor.getSectionIndex(pos.getY());
++            if (chunk != null) {
++                int i = this.levelHeightAccessor.getSectionIndex(pos.getY());
+ 
+-            if (i < 0 || i >= this.changedBlocksPerSection.length) return; // CraftBukkit - SPIGOT-6086, SPIGOT-6296
+-            if (this.changedBlocksPerSection[i] == null) {
+-                this.hasChangedSections = true; this.addToBroadcastMap(); // Paper - optimise chunk tick iteration
+-                this.changedBlocksPerSection[i] = new ShortOpenHashSet();
+-            }
++                if (i < 0 || i >= this.changedBlocksPerSection.length) return; // CraftBukkit - SPIGOT-6086, SPIGOT-6296
++                if (this.changedBlocksPerSection[i] == null) {
++                    this.hasChangedSections = true; this.addToBroadcastMap(); // Paper - optimise chunk tick iteration
++                    this.changedBlocksPerSection[i] = new ShortOpenHashSet();
++                }
+ 
+-            this.changedBlocksPerSection[i].add(SectionPos.sectionRelativePos(pos));
+-        }
++                this.changedBlocksPerSection[i].add(SectionPos.sectionRelativePos(pos));
++            }
++        });
+     }
+ 
+     public void sectionLightChanged(LightLayer lightType, int y) {
+diff --git a/src/main/java/net/minecraft/world/entity/Entity.java b/src/main/java/net/minecraft/world/entity/Entity.java
+index b0fe4332bc332a7d6aeaf1203b5981e1a8faddb7..46c6034f7d3cf152cc13773d38ad7b84792014a8 100644
+--- a/src/main/java/net/minecraft/world/entity/Entity.java
++++ b/src/main/java/net/minecraft/world/entity/Entity.java
+@@ -8,6 +8,7 @@ import com.google.common.collect.UnmodifiableIterator;
+ import com.mojang.logging.LogUtils;
+ import io.multipaper.shreddedpaper.region.RegionPos;
+ import io.multipaper.shreddedpaper.threading.ShreddedPaperRegionScheduler;
++import io.multipaper.shreddedpaper.threading.SynchronousPluginExecution;
+ import io.papermc.paper.util.TickThread;
+ import it.unimi.dsi.fastutil.objects.Object2DoubleArrayMap;
+ import it.unimi.dsi.fastutil.objects.Object2DoubleMap;
+@@ -133,6 +134,7 @@ import net.minecraft.world.phys.shapes.VoxelShape;
+ import net.minecraft.world.scores.PlayerTeam;
+ import net.minecraft.world.scores.ScoreHolder;
+ import net.minecraft.world.scores.Team;
++import org.bukkit.plugin.Plugin;
+ import org.slf4j.Logger;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location;
+@@ -4957,31 +4959,42 @@ public abstract class Entity implements SyncedDataHolder, Nameable, EntityAccess
+     @Override
+     public final void setRemoved(Entity.RemovalReason entity_removalreason, EntityRemoveEvent.Cause cause) {
+         // Paper start - rewrite chunk system
+-        io.papermc.paper.util.TickThread.ensureTickThread(this, "Cannot remove entity off-main");
+-        if (!((ServerLevel)this.level).getEntityLookup().canRemoveEntity(this)) {
+-            LOGGER.warn("Entity " + this + " is currently prevented from being removed from the world since it is processing section status updates", new Throwable());
+-            return;
+-        }
+-        // Paper end - rewrite chunk system
+-        CraftEventFactory.callEntityRemoveEvent(this, cause);
+-        // CraftBukkit end
+-        final boolean alreadyRemoved = this.removalReason != null; // Paper - Folia schedulers
+-        if (this.removalReason == null) {
+-            this.removalReason = entity_removalreason;
+-        }
++        // ShreddedPaper
++        Runnable run = () -> {
++            io.papermc.paper.util.TickThread.ensureTickThread(this, "Cannot remove entity off-main");
++            if (!((ServerLevel)this.level).getEntityLookup().canRemoveEntity(this)) {
++                LOGGER.warn("Entity " + this + " is currently prevented from being removed from the world since it is processing section status updates", new Throwable());
++                return;
++            }
++            // Paper end - rewrite chunk system
++            CraftEventFactory.callEntityRemoveEvent(this, cause);
++            // CraftBukkit end
++            final boolean alreadyRemoved = this.removalReason != null; // Paper - Folia schedulers
++            if (this.removalReason == null) {
++                this.removalReason = entity_removalreason;
++            }
+ 
+-        if (this.removalReason.shouldDestroy()) {
+-            this.stopRiding();
+-        }
++            if (this.removalReason.shouldDestroy()) {
++                this.stopRiding();
++            }
++
++            if (entity_removalreason != RemovalReason.UNLOADED_TO_CHUNK) this.getPassengers().forEach(Entity::stopRiding); // Paper - chunk system - don't adjust passenger state when unloading, it's just not safe (and messes with our logic in entity chunk unload)
++            this.levelCallback.onRemove(entity_removalreason);
++            // Paper start - Folia schedulers
++            if (!(this instanceof ServerPlayer) && entity_removalreason != RemovalReason.CHANGED_DIMENSION && !alreadyRemoved) {
++                // Players need to be special cased, because they are regularly removed from the world
++                this.retireScheduler();
++            }
++            // Paper end - Folia schedulers
++        };
+ 
+-        if (entity_removalreason != RemovalReason.UNLOADED_TO_CHUNK) this.getPassengers().forEach(Entity::stopRiding); // Paper - chunk system - don't adjust passenger state when unloading, it's just not safe (and messes with our logic in entity chunk unload)
+-        this.levelCallback.onRemove(entity_removalreason);
+-        // Paper start - Folia schedulers
+-        if (!(this instanceof ServerPlayer) && entity_removalreason != RemovalReason.CHANGED_DIMENSION && !alreadyRemoved) {
+-            // Players need to be special cased, because they are regularly removed from the world
+-            this.retireScheduler();
++        if (io.papermc.paper.util.TickThread.isTickThreadFor(this)) {
++            run.run();
++        } else {
++            Plugin plugin = SynchronousPluginExecution.getCurrentPlugin(); // ShreddedPaper - synchronous plugin execution
++            getBukkitEntity().getScheduler().run(plugin, task -> run.run(), null);
+         }
+-        // Paper end - Folia schedulers
++
+     }
+ 
+     public void unsetRemoved() {
+diff --git a/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java b/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
+index 5f810f8c11a10bd371127a08b4fd9df874373f90..927e164108fa1f05bdc69a7bc2955a21a105b37e 100644
+--- a/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/src/main/java/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -7,6 +7,8 @@ import java.util.Objects;
+ import java.util.Set;
+ import javax.annotation.Nullable;
+ 
++import io.multipaper.shreddedpaper.region.RegionPos;
++import io.multipaper.shreddedpaper.threading.ShreddedPaperRegionScheduler;
+ import io.papermc.paper.util.TickThread;
+ import net.minecraft.CrashReportCategory;
+ import net.minecraft.core.BlockPos;
+@@ -236,8 +238,17 @@ public abstract class BlockEntity {
+     public void setChanged() {
+         if (this.level != null) {
+             if (ignoreTileUpdates) return; // Paper - Perf: Optimize Hoppers
+-            TickThread.ensureTickThread((ServerLevel) this.level, this.worldPosition, "Block entity modification"); // ShreddedPaper
+-            BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
++
++
++            if (TickThread.isTickThreadFor((ServerLevel) this.level, this.worldPosition)) {
++                TickThread.ensureTickThread((ServerLevel) this.level, this.worldPosition, "Block entity modification"); // ShreddedPaper
++                BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
++            } else {
++                ShreddedPaperRegionScheduler.schedule((ServerLevel) this.level, RegionPos.forBlockPos(this.worldPosition), () -> {
++                    BlockEntity.setChanged(this.level, this.worldPosition, this.blockState);
++                });
++            }
++
+         }
+ 
+     }
