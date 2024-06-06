@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 03:33:20 +0300
+Subject: [PATCH] optimize LevelChunkRegionMap#forEach.
+
+
+diff --git a/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java b/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
+index bcedf8016ef8a51269671c3e7c250b3c94391910..a769bbfc0a3232b5fcc51c4c8a8ab9a0b0583ea9 100644
+--- a/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
++++ b/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
+@@ -2,6 +2,7 @@ package io.multipaper.shreddedpaper.region;
+ 
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
++import it.unimi.dsi.fastutil.objects.ObjectCollection;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+@@ -44,6 +45,8 @@ public class LevelChunkRegionMap {
+     public void remove(RegionPos regionPos) {
+         regionsLock.write(() -> {
+             LevelChunkRegion region = regions.remove(regionPos.longKey);
++            if (region == null) return;
++
+             if (!region.isEmpty()) {
+                 // Guess this region has been modified by another thread, re-add it
+                 regions.put(regionPos.longKey, region);
+@@ -60,8 +63,9 @@ public class LevelChunkRegionMap {
+     }
+ 
+     public void forEach(Consumer<LevelChunkRegion> consumer) {
++        List<LevelChunkRegion> list = new ArrayList<>(regions.values());
+         regionsLock.optimisticRead(() -> {
+-            for (LevelChunkRegion region : regions.values()) {
++            for (LevelChunkRegion region : list) {
+                 consumer.accept(region);
+             }
+             return null;

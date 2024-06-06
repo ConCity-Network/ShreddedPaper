@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alpho320 <cahitbaba00@gmail.com>
+Date: Thu, 6 Jun 2024 03:58:53 +0300
+Subject: [PATCH] optimize LevelChunkRegionMap#forEach.
+
+
+diff --git a/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java b/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
+index 68e253333b2635bc18cc4e4f687615a24817531e..b9723fc267c75f4db743cfe1fe284f504a020513 100644
+--- a/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
++++ b/src/main/java/io/multipaper/shreddedpaper/region/LevelChunkRegionMap.java
+@@ -2,7 +2,6 @@ package io.multipaper.shreddedpaper.region;
+ 
+ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+ import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+-import it.unimi.dsi.fastutil.objects.ObjectCollection;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.server.level.ServerLevel;
+ import net.minecraft.server.level.ServerPlayer;
+@@ -45,8 +44,6 @@ public class LevelChunkRegionMap {
+     public void remove(RegionPos regionPos) {
+         regionsLock.write(() -> {
+             LevelChunkRegion region = regions.remove(regionPos.longKey);
+-            if (region == null) return;
+-
+             if (!region.isEmpty()) {
+                 // Guess this region has been modified by another thread, re-add it
+                 regions.put(regionPos.longKey, region);
+@@ -62,15 +59,21 @@ public class LevelChunkRegionMap {
+         getOrCreate(RegionPos.forChunk(levelChunk.getPos())).remove(levelChunk);
+     }
+ 
++    public void forEachA(Consumer<LevelChunkRegion> consumer) {
++        List<LevelChunkRegion> regionsCopy = new ArrayList<>(regions.size());
++        regionsLock.read(() -> regionsCopy.addAll(regions.values()));
++        regionsCopy.forEach(consumer);
++    }
++
+     public void forEach(Consumer<LevelChunkRegion> consumer) {
+         if (regions != null) {
+-            List<LevelChunkRegion> list = new ArrayList<>(regions.values());
++            List<LevelChunkRegion> list = new ArrayList<>();
+             regionsLock.read(() -> {
+-                for (LevelChunkRegion region : list) {
+-                    consumer.accept(region);
+-                }
+-                return null;
++                list.addAll(regions.values());
+             });
++            for (LevelChunkRegion levelChunkRegion : list) {
++                consumer.accept(levelChunkRegion);
++            }
+         }
+     }
+ 
